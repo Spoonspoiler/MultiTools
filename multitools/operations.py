@@ -11,6 +11,7 @@ from PIL import Image, ImageOps
 
 from .conversions.contours import Config, extract_black_ink
 from .conversions.image import convert_image
+from .provenance import digest, link
 
 
 @dataclass(frozen=True)
@@ -111,6 +112,7 @@ def convert_file(source: Path, directory: Path, operation: Operation, cancelled:
     if not directory.is_dir():
         raise NotADirectoryError(f"Dossier de sortie introuvable : {directory}")
 
+    source_sha = digest(source, lambda: check_cancelled(cancelled)) if operation in IMAGES else None
     with TemporaryDirectory(prefix=".multitools-", dir=directory) as workdir:
         temporary = Path(workdir) / f"sortie{operation.extension}"
         if operation == TRANSPARENT_CONTOURS:
@@ -127,4 +129,13 @@ def convert_file(source: Path, directory: Path, operation: Operation, cancelled:
             convert_media(source, temporary, operation, cancelled)
 
         check_cancelled(cancelled)
-        return _publish(temporary, directory, source.stem + operation.suffix)
+        if source_sha and digest(source, lambda: check_cancelled(cancelled)) != source_sha:
+            raise OSError('La source a changé pendant la conversion.')
+        target = _publish(temporary, directory, source.stem + operation.suffix)
+        if source_sha:
+            try:
+                link(source, target, operation.label, source_sha=source_sha)
+            except Exception:
+                target.unlink()
+                raise
+        return target

@@ -35,7 +35,10 @@ def _image(path: Path) -> str:
     with Image.open(path) as original:
         original.draft("RGB", (640, 640))
         original.thumbnail((640, 640), Image.Resampling.LANCZOS)
-        image = ImageOps.exif_transpose(original)
+        image = ImageOps.exif_transpose(original).convert('RGBA')
+        background = Image.new('RGBA', image.size, 'white')
+        background.alpha_composite(image)
+        image = background.convert('RGB')
         with BytesIO() as buffer:
             image.convert("RGB").save(buffer, "JPEG", quality=80)
             return b64encode(buffer.getvalue()).decode("ascii")

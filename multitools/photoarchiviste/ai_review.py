@@ -12,6 +12,7 @@ import sqlite3
 from .exact_duplicates import fingerprint
 from .inventory import TaskStopped
 from .path_safety import checked_stat
+from ..provenance import resolve, context as provenance_context, analysis_view
 
 SCENES = ('famille','portrait','paysage','document','capture_ecran','objet','autre','incertain')
 QUALITIES = ('correcte','floue','sombre','incertaine')
@@ -69,6 +70,9 @@ class ReviewStore:
         self.db=sqlite3.connect(self.path,timeout=10)
         self.db.row_factory=sqlite3.Row
         self.db.executescript('''
+            CREATE TABLE IF NOT EXISTS analysis_provenance (
+              context TEXT NOT NULL, sha256 TEXT NOT NULL, signature TEXT NOT NULL,
+              PRIMARY KEY(context,sha256));
             CREATE TABLE IF NOT EXISTS analyses (
               context TEXT NOT NULL, sha256 TEXT NOT NULL, model TEXT NOT NULL,
               preferences TEXT NOT NULL, result TEXT NOT NULL, created TEXT NOT NULL,
@@ -255,7 +259,11 @@ def analyse_index(photos,store_path,client,model,preferences,gate,progress=lambd
                 gate.check()
                 if not any(current_reference(photo) for photo in copies):
                     raise OSError('Les références de ce contenu ont changé ; réindexer.')
-                if store.cached(context,sha) is not None:
+                provenance = resolve(copies[0].path, gate.check)
+                signature = json.dumps(provenance, sort_keys=True)
+                previous = store.db.execute('SELECT signature FROM analysis_provenance WHERE context=? AND sha256=?',
+                                            (context, sha)).fetchone()
+                if store.cached(context,sha) is not None and ((previous is None and not provenance) or (previous is not None and previous[0] == signature)):
                     cached+=1
                     if cached%100==0 or processed+cached==len(unique):
                         progress(f'{processed+cached}/{len(unique)} contenus · {cached} résultat(s) réutilisé(s)')
@@ -271,6 +279,17 @@ def analyse_index(photos,store_path,client,model,preferences,gate,progress=lambd
                     except OSError:
                         continue
                 if photo is None: raise OSError('Aucun exemplaire conforme à l’index ; réindexer les sources.')
+                provenance = resolve(photo.path, gate.check)
+                signature = json.dumps(provenance, sort_keys=True)
+                source_description = ''
+                if provenance:
+                    source_sha = provenance[-1]['source_sha256']
+                    source_result = store.cached(context, source_sha)
+                    correction = store.db.execute(
+                        'SELECT observation FROM observation_edits WHERE context=? AND path=? AND sha256=?',
+                        (context, provenance[-1]['source_path'], source_sha)).fetchone()
+                    if correction is not None: source_description = correction[0]
+                    elif source_result: source_description = source_result.get('observation', '')
                 messages=[{'role':'system','content':
                     'Tu aides un humain à trier ses photos. Réponds uniquement avec les choix JSON demandés, en français. '
                     'Décris les éléments visibles sans inventer une identité ou un événement. '
@@ -278,16 +297,26 @@ def analyse_index(photos,store_path,client,model,preferences,gate,progress=lambd
                     'Si la valeur personnelle ou la qualité est incertaine, propose a_revoir. '
                     'Les tags sont des propositions courtes, pas des faits établis. Tu ne modifies aucun fichier.'},
                     {'role':'user','content':f'Consignes du propriétaire : {preferences[:800]}\n'
+                     + provenance_context(provenance) + '\n'
+                     + ('Description antérieure de la source (contexte à vérifier, pas une preuve) : '
+                        + json.dumps(source_description[:600],ensure_ascii=False) + '\n' if source_description else '')
+                     + 
                      f'Tags déjà confirmés, à réutiliser seulement si pertinents : {", ".join(vocabulary[:15])}.\n'
                      f'Corrections de cas précédents (ne pas généraliser une identité ou un événement) : {json.dumps(examples,ensure_ascii=False)}\n'
                      'Analyse cette photo. Limite l’observation à deux phrases et les tags à huit.'}]
-                result=client.chat(model,messages,lambda text:None,gate.stopped,image=photo.path,
-                                   context=2048,schema=SCHEMA)
+                with analysis_view(photo.path, provenance) as view:
+                    result=client.chat(model,messages,lambda text:None,gate.stopped,image=view,
+                                       context=2048,schema=SCHEMA)
                 gate.check()
                 # Refuser de rattacher une analyse à un original changé pendant l’inférence.
                 after=fingerprint(photo.path,photo.path.parent,gate)
                 if after.sha256!=photo.sha256: raise OSError('La photo a changé pendant l’analyse.')
+                if resolve(photo.path, gate.check) != provenance:
+                    raise OSError('La provenance a changé pendant l’analyse ; relancer.')
                 store.record(context,photo,model,preferences,json.loads(result.text))
+                with store.db:
+                    store.db.execute('INSERT OR REPLACE INTO analysis_provenance VALUES (?,?,?)',
+                                     (context, sha, signature))
                 processed+=1
                 consecutive_errors=0
                 progress(f'{processed+cached}/{len(unique)} contenus · {photo.path.name}')

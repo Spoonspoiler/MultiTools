@@ -12,6 +12,7 @@ import tempfile
 from .model import FIELDS, LAYERS, SKILL, Store, Editing, document, geometry, validate_analysis
 from .imaging import preview, operation, overlay, TOOLS
 from ..ollama import DEFAULT_MODEL
+from ..provenance import resolve, context as provenance_context
 
 
 class DocumentaryPane(ttk.Frame):
@@ -399,12 +400,14 @@ class DocumentaryPane(ttk.Frame):
                                y/self.native_size[1]*analysis_image.height) for x,y in obj['points']],fill='white')
         prompt=SKILL['instructions']+' Renvoyer un objet JSON avec seulement les champs lisibles parmi : '+', '.join(FIELDS)
         prompt+=' Chaque champ contient value (texte), status (visible ou hypothese), justification (texte). '
+        prompt+=' Cette vue a reçu les traitements suivants dans Multitools : '+json.dumps(self.edit.data['transforms'],ensure_ascii=False)+'. Il s’agit du même document. '
         prompt+='Exemples humains validés (contexte uniquement): '+json.dumps(examples,ensure_ascii=False)[:2000]
         self.status.set('Analyse Qwen en cours ; les objets restent éditables.')
         def work():
+            source_context=provenance_context(resolve(path))
             with tempfile.TemporaryDirectory(prefix='multitools-doc-') as folder:
                 view=Path(folder)/'analyse.png'; analysis_image.save(view)
-                result=self.services.ollama.chat(model,[{'role':'user','content':prompt}],lambda text:None,self.cancel,
+                result=self.services.ollama.chat(model,[{'role':'user','content':prompt+'\n'+source_context}],lambda text:None,self.cancel,
                                                  image=view,schema={'type':'object'})
             return validate_analysis(json.loads(result.text))
         def done(data):

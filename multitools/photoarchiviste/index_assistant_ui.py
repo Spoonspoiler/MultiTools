@@ -4,7 +4,7 @@ from datetime import datetime
 from pathlib import Path
 import sqlite3
 import tkinter as tk
-from tkinter import ttk, simpledialog
+from tkinter import ttk, simpledialog, filedialog
 
 from ..disk_picker import askdirectory, ask_new_directory
 from .ai_review import ReviewStore, analyse_index, context_key, SCENES
@@ -147,6 +147,7 @@ class IndexAssistantPane(ttk.Frame):
         observation_header.pack(fill='x')
         ttk.Label(observation_header,text='Observation de Qwen',font=('TkDefaultFont',10,'bold')).pack(side='left')
         ttk.Button(observation_header,text='Corriger…',command=self.edit_note).pack(side='right')
+        ttk.Button(observation_header,text='Lier à la source…',command=self.link_source).pack(side='right',padx=4)
         self.observation_label=ttk.Label(observation_panel,textvariable=self.observation,
                                         wraplength=450,width=1,justify='left')
         self.observation_label.pack(fill='x',pady=(4,0))
@@ -262,6 +263,24 @@ class IndexAssistantPane(ttk.Frame):
             self.status.set(f'Choix enregistrés ; questions à recharger : {error}')
         self._update_comparison()
         return True
+
+    def link_source(self):
+        if not self.owner.idle() or self.preview.photo is None: return
+        from ..provenance import link
+        photo = self.preview.photo
+        selected = filedialog.askopenfilename(parent=self, title='Image source de cette version traitée')
+        if not selected: return
+        self.status.set('Enregistrement du lien avec la source…')
+        future = self.executor.submit(link, Path(selected), photo.path,
+                                      'Traitement déclaré par l’utilisateur', manual=True)
+        def poll():
+            if not future.done(): self.after(100, poll); return
+            try:
+                future.result()
+                self.status.set('Source liée. Relancer l’analyse IA pour prendre en compte la provenance.')
+            except (OSError, ValueError) as error:
+                self.status.set(f'Lien non enregistré : {error}')
+        self.after(100, poll)
 
     def edit_note(self):
         if not self.owner.idle() or not self.questions: return
