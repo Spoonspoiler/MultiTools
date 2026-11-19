@@ -12,6 +12,7 @@ import sqlite3
 from .exact_duplicates import fingerprint
 from .inventory import TaskStopped
 from .path_safety import checked_stat
+from .tags import MAX_TAGS, validate as tags_clean
 from ..provenance import resolve, context as provenance_context, analysis_view
 
 SCENES = ('famille','portrait','paysage','document','capture_ecran','objet','autre','incertain')
@@ -24,7 +25,7 @@ SCHEMA = {'type':'object','properties':{
     'qualite':{'type':'string','enum':list(QUALITIES)},
     'decision':{'type':'string','enum':list(DECISIONS)},
     'confiance':{'type':'string','enum':list(CONFIDENCES)},
-    'tags':{'type':'array','maxItems':8,'items':{'type':'string','maxLength':40}},
+    'tags':{'type':'array','maxItems':MAX_TAGS,'items':{'type':'string','maxLength':40}},
     'observation':{'type':'string','maxLength':600}},
     'required':['scene','qualite','decision','confiance','tags','observation'],
     'additionalProperties':False}
@@ -37,12 +38,6 @@ def context_key(model, preferences):
 HUMAN_CONTEXT=context_key('human-only','')
 
 
-def tags_clean(values):
-    if not isinstance(values,list) or any(not isinstance(value,str) for value in values):
-        raise ValueError('Les tags doivent être une liste de textes.')
-    return list(dict.fromkeys(value.strip()[:40] for value in values if value.strip()))[:20]
-
-
 def validate_result(value):
     if not isinstance(value,dict):
         raise ValueError('Réponse IA invalide.')
@@ -50,7 +45,7 @@ def validate_result(value):
         if value.get(name) not in allowed:
             raise ValueError(f'Choix IA invalide : {name}')
     tags=tags_clean(value.get('tags'))
-    if len(tags)>8 or not isinstance(value.get('observation'),str):
+    if len(tags)>MAX_TAGS or not isinstance(value.get('observation'),str):
         raise ValueError('Observation ou tags IA invalides.')
     return {**{name:value[name] for name in ('scene','qualite','decision','confiance')},
             'tags':tags,'observation':value['observation'][:600]}
@@ -103,7 +98,10 @@ class ReviewStore:
 
     def cached(self,context,sha256):
         row=self.db.execute('SELECT result FROM analyses WHERE context=? AND sha256=?',(context,sha256)).fetchone()
-        return json.loads(row['result']) if row else None
+        if row is None: return None
+        result = json.loads(row['result'])
+        result['tags'] = result['tags'][:MAX_TAGS]
+        return result
 
     def record(self,context,photo,model,preferences,result):
         result=validate_result(result)
@@ -303,7 +301,7 @@ def analyse_index(photos,store_path,client,model,preferences,gate,progress=lambd
                      + 
                      f'Tags déjà confirmés, à réutiliser seulement si pertinents : {", ".join(vocabulary[:15])}.\n'
                      f'Corrections de cas précédents (ne pas généraliser une identité ou un événement) : {json.dumps(examples,ensure_ascii=False)}\n'
-                     'Analyse cette photo. Limite l’observation à deux phrases et les tags à huit.'}]
+                     'Analyse cette photo. Limite l’observation à deux phrases et les tags à quatre maximum. Plusieurs photos peuvent avoir les mêmes tags.'}]
                 with analysis_view(photo.path, provenance) as view:
                     result=client.chat(model,messages,lambda text:None,gate.stopped,image=view,
                                        context=2048,schema=SCHEMA)

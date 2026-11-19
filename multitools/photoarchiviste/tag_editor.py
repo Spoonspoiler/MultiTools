@@ -1,23 +1,14 @@
 """Suggestions de tags distinctes des ajouts et choix humains."""
-import unicodedata
 import tkinter as tk
 from tkinter import ttk
-
-
-def clean(values):
-    result={}
-    for value in values:
-        if not isinstance(value,str): raise ValueError('Un tag doit être un texte.')
-        value=unicodedata.normalize('NFC',value).strip()[:40]
-        if value: result.setdefault(value.casefold(),value)
-    return result
+from .tags import MAX_TAGS, clean
 
 
 class TagSelection:
     def __init__(self,proposed=(),selected=()):
         self.proposed=clean(proposed)
         self.chosen=clean(selected)
-        if len(self.chosen)>20: raise ValueError('20 tags maximum par photo.')
+        # Les anciennes sélections restent visibles pour pouvoir retirer les tags en trop.
 
     def values(self):
         return list(self.chosen.values())
@@ -35,7 +26,7 @@ class TagSelection:
 
     def add(self,values):
         candidate={**self.chosen,**clean(values)}
-        if len(candidate)>20: raise ValueError('20 tags maximum par photo.')
+        if len(candidate)>MAX_TAGS: raise ValueError('4 tags maximum par photo.')
         self.chosen=candidate
 
 
@@ -48,7 +39,7 @@ class TagEditor(ttk.Frame):
         self.syncing=False
         self.personal_page=0
         self.new_tag=tk.StringVar(self)
-        ttk.Label(self,text='Qwen propose · coche les tags à retenir',style='Photo.Side.TLabel').pack(anchor='w')
+        ttk.Label(self,text='Qwen propose · 4 tags maximum par photo',style='Photo.Side.TLabel').pack(anchor='w')
         self.proposals=ttk.Frame(self,style='Photo.Side.TFrame')
         self.proposals.pack(fill='x',pady=(4,6))
         personal_bar=ttk.Frame(self,style='Photo.Side.TFrame')
@@ -154,6 +145,8 @@ class TagEditor(ttk.Frame):
         personal=self.model.personal()
         self.personal_page=min(self.personal_page,max(0,(len(personal)-1)//4))
         self.personal_title.set(f'Mes ajouts ({len(personal)})' if personal else 'Mes ajouts')
+        if len(self.model.chosen)>MAX_TAGS:
+            self.personal_title.set(f'{len(self.model.chosen)} tags sélectionnés : retirer les tags en trop (maximum 4)')
         if len(personal)>4:
             self.following.pack(side='right')
             self.previous.pack(side='right',padx=3)
