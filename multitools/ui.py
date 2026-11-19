@@ -14,6 +14,7 @@ from .library_ui import LibraryPane
 from .server_tasks import Services
 from .status_ui import StatusPane, StoragePane
 from .storage import guard_target
+from .documentary.ui import DocumentaryPane
 
 
 IMAGE_TYPES = [("Images", "*.png *.jpg *.jpeg *.jpe *.jfif *.webp *.avif *.bmp *.tif *.tiff *.gif *.ico"),
@@ -257,7 +258,9 @@ def run() -> None:
     photos = PhotoArchiviste(tabs, analyze=analyze_photo, preflight=check_target, ollama=services.ollama)
     images = ConversionPanel(tabs, IMAGES, IMAGE_TYPES)
     media = ConversionPanel(tabs, MEDIA, MEDIA_TYPES)
+    documentary = DocumentaryPane(tabs, services)
     tabs.add(photos, text="PhotoArchiviste")
+    tabs.add(documentary, text="Analyse documentaire")
     tabs.add(images, text="Images")
     tabs.add(media, text="Vidéo et audio")
     tabs.add(library, text="Bibliothèque")
@@ -268,7 +271,7 @@ def run() -> None:
     closing_library = False
     def close() -> None:
         nonlocal closing_library
-        panes = (photos, assistant, library, storage, state)
+        panes = (photos, assistant, library, storage, state, documentary)
         if any(pane.busy for pane in panes) or images.busy or media.busy:
             for pane in panes:
                 if pane is not library or not closing_library:
@@ -281,6 +284,8 @@ def run() -> None:
             library.stop_server()
             root.after(125, close)
         else:
+            documentary.save()
+            documentary.pool.shutdown(wait=False, cancel_futures=True)
             services.queue.close()
             root.destroy()
 
