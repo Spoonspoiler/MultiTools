@@ -1,0 +1,8 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.idea/
+server_state/
+*.sqlite3
+*.db
