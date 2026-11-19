@@ -14,6 +14,40 @@ from .adaptive_panel import AdaptivePanel
 from .comparison_group import comparison_group
 from .group_comparison_ui import GroupComparison
 
+
+class DescriptionDialog(simpledialog.Dialog):
+    """Éditeur multiligne redimensionnable, sans enregistrement à l'annulation."""
+    def __init__(self, parent, value):
+        self.initial_value = value
+        super().__init__(parent, title='Modifier la description')
+
+    def body(self, master):
+        from tkinter.scrolledtext import ScrolledText
+        self.resizable(True, True)
+        self.minsize(420, 300)
+        ttk.Label(master, text='Corrige la description de Qwen, puis enregistre les modifications.').pack(
+            anchor='w', pady=(0, 8))
+        self.editor = ScrolledText(master, wrap='word', width=85, height=24,
+                                   undo=True, padx=10, pady=10)
+        self.editor.pack(fill='both', expand=True)
+        self.editor.insert('1.0', self.initial_value)
+        self.editor.edit_reset()
+        self.editor.mark_set('insert', '1.0')
+        master.pack_configure(fill='both', expand=True)
+        return self.editor
+
+    def buttonbox(self):
+        buttons = ttk.Frame(self)
+        buttons.pack(fill='x', padx=10, pady=(0, 10))
+        ttk.Button(buttons, text='Annuler', command=self.cancel).pack(side='right')
+        ttk.Button(buttons, text='Enregistrer', command=self.ok).pack(side='right', padx=8)
+        self.bind('<Escape>', self.cancel)
+        self.bind('<Control-Return>', self.ok)
+
+    def apply(self):
+        self.result = self.editor.get('1.0', 'end-1c')
+
+
 SCENE_LABELS={'famille':'Famille / souvenir','portrait':'Portrait','paysage':'Paysage',
               'document':'Document','capture_ecran':'Capture d’écran','objet':'Objet',
               'autre':'Autre','incertain':'À préciser'}
@@ -232,9 +266,8 @@ class IndexAssistantPane(ttk.Frame):
     def edit_note(self):
         if not self.owner.idle() or not self.questions: return
         question = self.questions[self.position]
-        value = simpledialog.askstring('Modifier la description',
-            'Corrige directement la description de cette photo :', parent=self,
-            initialvalue=question['proposal']['observation'])
+        dialog = DescriptionDialog(self, question['proposal']['observation'])
+        value = dialog.result
         if value is None: return
         try:
             with ReviewStore(self.store_path()) as store:
